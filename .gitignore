@@ -1,0 +1,10 @@
+venv/
+ENV/
+VENV/
+__pycache__/
+.vscode/
+Gemlife/
+GIPF/
+NHE/
+*.pyc
+*.csv
