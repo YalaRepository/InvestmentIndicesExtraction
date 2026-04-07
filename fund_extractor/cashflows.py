@@ -1,6 +1,8 @@
+
 from __future__ import annotations
 
 import re
+from .utils import parse_date
 from decimal import Decimal
 from pathlib import Path
 
@@ -240,37 +242,84 @@ def cashflows_allegrow(
 
 
 
+# def cashflows_agp_stable(
+#     pages: list[str], report_date: str, pdf_path: Path | None = None
+# ) -> list[dict[str, str]]:
+#     rows = []
+#     for page_text in pages:
+#         lines = [normalize_space(line) for line in page_text.splitlines() if line.strip()]
+#         for line in lines:
+#             if "withdrawal disinvestment" not in line.lower():
+#                 continue
+#             match = re.search(
+#                 r"(\d{2}/\d{2}/\d{4})\s+Withdrawal Disinvestment.*?\(([\d,]+\.\d{2})\)\s+\d[\d,]*\.\d{2}",
+#                 line,
+#                 flags=re.IGNORECASE,
+#             )
+#             if not match:
+#                 amounts = re.findall(AMOUNT_PATTERN, line)
+#                 if len(amounts) < 2:
+#                     continue
+#                 amount = amounts[-2]
+#                 cashflow_date = ""
+#             else:
+#                 cashflow_date = parse_date(match.group(1))
+#                 amount = f"({match.group(2)})"
+#             rows.append(
+#                 {
+#                     "cashflow_date": cashflow_date,
+#                     "cashflow_amount": format_amount(amount),
+#                     "cashflow_type": "Withdrawal Disinvestment",
+#                     "cashflow_source": line,
+#                 }
+#             )
+#     return dedupe_cashflows(rows)
+
 def cashflows_agp_stable(
     pages: list[str], report_date: str, pdf_path: Path | None = None
 ) -> list[dict[str, str]]:
     rows = []
-    for page_text in pages:
+
+    for page_number, page_text in enumerate(pages, start=1):
         lines = [normalize_space(line) for line in page_text.splitlines() if line.strip()]
+
         for line in lines:
-            if "withdrawal disinvestment" not in line.lower():
+            # ✅ Only process lines that start with a date (real transaction rows)
+            if not re.match(r"\d{2}/\d{2}/\d{4}", line):
                 continue
-            match = re.search(
-                r"(\d{2}/\d{2}/\d{4})\s+Withdrawal Disinvestment.*?\(([\d,]+\.\d{2})\)\s+\d[\d,]*\.\d{2}",
-                line,
-                flags=re.IGNORECASE,
-            )
-            if not match:
-                amounts = re.findall(AMOUNT_PATTERN, line)
-                if len(amounts) < 2:
-                    continue
-                amount = amounts[-2]
-                cashflow_date = ""
-            else:
-                cashflow_date = parse_date(match.group(1))
-                amount = f"({match.group(2)})"
+
+            # Extract date
+            date_match = re.search(r"\d{2}/\d{2}/\d{4}", line)
+            cashflow_date = parse_date(date_match.group(0)) if date_match else ""
+
+            # Extract all amounts
+            amounts = re.findall(AMOUNT_PATTERN, line)
+            if not amounts:
+                continue
+
+            # Extract description (between date and first numeric field)
+            tokens = line.split()
+            description_parts = []
+
+            for token in tokens[1:]:
+                if re.match(AMOUNT_PATTERN, token):
+                    break
+                description_parts.append(token)
+
+            description = " ".join(description_parts)
+
+            # Choose correct amount (transaction value usually second last)
+            amount = amounts[-2] if len(amounts) >= 2 else amounts[-1]
+
             rows.append(
                 {
                     "cashflow_date": cashflow_date,
                     "cashflow_amount": format_amount(amount),
-                    "cashflow_type": "Withdrawal Disinvestment",
+                    "cashflow_type": description,
                     "cashflow_source": line,
                 }
             )
+
     return dedupe_cashflows(rows)
 
 
