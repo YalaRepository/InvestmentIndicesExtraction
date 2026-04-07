@@ -11,11 +11,11 @@ from .providers import detect_provider
 from .utils import extract_report_date
 
 
-
 def build_rows(pdf_path: Path) -> list[dict[str, str]]:
     provider = detect_provider(pdf_path)
     try:
         pages = read_pdf_pages(pdf_path)
+
     except FileNotDecryptedError:
         return [
             {
@@ -25,6 +25,7 @@ def build_rows(pdf_path: Path) -> list[dict[str, str]]:
                 "fund_value": "",
                 "fund_value_source": "",
                 "fund_value_page": "",
+                "column_headings": "",
                 "cashflow_date": "",
                 "cashflow_amount": "",
                 "cashflow_type": "",
@@ -41,6 +42,7 @@ def build_rows(pdf_path: Path) -> list[dict[str, str]]:
                 "fund_value": "",
                 "fund_value_source": "",
                 "fund_value_page": "",
+                "column_headings": "",
                 "cashflow_date": "",
                 "cashflow_amount": "",
                 "cashflow_type": "",
@@ -74,6 +76,7 @@ def build_rows(pdf_path: Path) -> list[dict[str, str]]:
                 "fund_value": fund_value.value if fund_value else "",
                 "fund_value_source": fund_value.source if fund_value else "",
                 "fund_value_page": str(fund_value.page) if fund_value else "",
+                "column_headings": fund_value.column_headings if fund_value else "",
                 "cashflow_date": cashflow["cashflow_date"],
                 "cashflow_amount": cashflow["cashflow_amount"],
                 "cashflow_type": cashflow["cashflow_type"],

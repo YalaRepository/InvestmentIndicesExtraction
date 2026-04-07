@@ -2,7 +2,7 @@ from pathlib import Path
 
 DATA_DIR = Path("Data")
 OUTPUT_CSV = Path("extracted_fund_data.csv")
-PDF_PASSWORDS_CSV = Path("pdf_passwords.csv")
+PDF_PASSWORDS_CSV = Path("passwords")
 
 DATE_PATTERNS = (
     "%d %B %Y",
