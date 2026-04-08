@@ -9,3 +9,8 @@ NHE/
 *.pyc
 *.csv
 *.zip
+Data/
+Results/
+extracted_fund_data.csv
+Notes on fund value finders.docx
+February/

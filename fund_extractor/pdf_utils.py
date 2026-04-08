@@ -3,7 +3,10 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-import pikepdf
+try:
+    import pikepdf
+except ImportError:  # pragma: no cover - optional fallback dependency
+    pikepdf = None
 from pypdf import PdfReader
 from pypdf.errors import FileNotDecryptedError
 
@@ -79,6 +82,9 @@ def _try_pypdf(path: Path, candidates: list[str]) -> list[str]:
 
 
 def _try_pikepdf(path: Path, candidates: list[str]) -> list[str]:
+    if pikepdf is None:
+        raise FileNotDecryptedError("pikepdf is not installed")
+
     temp_path = None
 
     try:
