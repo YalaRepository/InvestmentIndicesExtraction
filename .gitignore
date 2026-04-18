@@ -6,9 +6,10 @@ __pycache__/
 Gemlife/
 GIPF/
 NHE/
-NAmibMills/
+NamibMills/
 Nampower/
 Namwater/
 *.pyc
 *.csv
 *.zip
+*.xlsb
