@@ -14,24 +14,74 @@ except ImportError:
     OCR_AVAILABLE = False
 
 PASSWORD_LIST = [
-    "0005",
+    "0005",             #NMC Capricorn Asset Management and NMC M&G
     "25/7/7/516",
-    "25/7/7/6",
+    "25/7/7/6",         #UNIPOL IJG and UNIPOL Capricorn Asset Management
     "25/7/7/89",
     "25/7/7/18",
     "25/7/7/227",       #Namib Mills Capricorn Asset Management
     "25/7/7/36",
     "25/7/7/35",
-    "25/7/7/50",
+    "25/7/7/50",        #Nampower Capricorn Asset Management
     "25/7/7/57",        #NHE IJG password
-    "25/7/7/89",
     "25/7/7/18",
     "25/7/7/110",
     "25/7/7/57",
     "ACC_1176_2387",    #Nampower OM
-    "ACC_1726_3910",    #Unipol
+    "ACC_1726_3910",    #Unipol OM
     "NinetyOne"         #All NinetyOne Passwords
 ]
+
+def extract_contributions_table(page, file_name, page_num):
+    text = page.extract_text()
+
+    if not text or "Contributions" not in text:
+        return []
+
+    print("   💰 Extracting Contributions Table...")
+
+    lines = [l.strip() for l in text.split("\n") if l.strip()]
+
+    rows = []
+    table_name = f"Contributions_{page_num}"
+    row_idx = 1
+
+    for line in lines:
+
+        # Skip headers
+        if any(h in line for h in [
+            "Settlement", "Trade", "Effective", "Entry",
+            "Transaction", "Instrument", "Description",
+            "Amount", "Contributions", "Withdrawals"
+        ]):
+            continue
+
+        # Skip totals
+        if "Total" in line:
+            continue
+
+        # 🔑 Detect data rows (must start with date)
+        if re.match(r"\d{2}/\d{2}/\d{4}", line):
+
+            parts = re.split(r"\s{2,}", line)
+
+            # fallback if spacing fails
+            if len(parts) < 5:
+                parts = re.split(r"\s+", line)
+
+            for col_idx, val in enumerate(parts, 1):
+                rows.append([
+                    file_name,
+                    table_name,
+                    row_idx,
+                    col_idx,
+                    clean_value(val)
+                ])
+
+            row_idx += 1
+
+    return rows
+
 
 
 def open_pdf_with_passwords(file_path):
@@ -270,6 +320,218 @@ def extract_ijg_structured(page, file_name, page_num):
 
     return rows
 
+#-----------------------------
+# OM Tables functions since the others just don't work
+#-----------------------------
+
+# ----------------------------
+# TARGETED TABLE EXTRACTION (PORTFOLIO + BANK)
+# ----------------------------
+
+def extract_portfolio_summary_precise(page, file_name, page_num):
+    text = page.extract_text()
+    if not text or "PORTFOLIO SUMMARY OF ASSETS" not in text:
+        return []
+
+    print("   🎯 Extracting PORTFOLIO SUMMARY (precise mode)")
+
+    rows = []
+    table_name = f"PortfolioSummary_{page_num}"
+
+    lines = [l.strip() for l in text.split("\n") if l.strip()]
+
+    row_idx = 1
+
+    for line in lines:
+        # skip headers
+        if any(h in line for h in [
+            "PORTFOLIO SUMMARY",
+            "Assets Book value",
+            "Weight %",
+            "Market value"
+        ]):
+            continue
+
+        # split label + numbers
+        nums = re.findall(r"-?\d[\d,]*\.?\d*", line)
+
+        if len(nums) < 2:
+            continue
+
+        label = line
+        for n in nums:
+            label = label.replace(n, "", 1)
+
+        label = clean_value(label)
+        nums = [clean_value(n).replace(",", "") for n in nums]
+
+        output = [label] + nums if label else nums
+
+        for col_idx, val in enumerate(output, 1):
+            rows.append([file_name, table_name, row_idx, col_idx, val])
+
+        row_idx += 1
+
+    return rows
+
+# ----------------------------
+# BANK STATEMENT ROW RECONSTRUCTION (ROBUST)
+# ----------------------------
+
+def extract_bank_statement_reconstructed(page, file_name, page_num):
+    text = page.extract_text()
+
+    if not text or "BANK STATEMENT" not in text:
+        return []
+
+    print("   🏦 Reconstructing BANK STATEMENT rows...")
+
+    lines = [l.strip() for l in text.split("\n") if l.strip()]
+
+    rows = []
+    table_name = f"BankStatement_{page_num}"
+
+    current_row = []
+    row_idx = 1
+
+    # ✅ unified robust date pattern
+    date_pattern = r"\d{2}\s*/\s*\d{2}\s*/\s*(?:\d{2}|\d{4})"
+
+    for line in lines:
+
+        # skip obvious headers
+        if any(h in line for h in [
+            "BANK STATEMENT",
+            "Transaction type",
+            "Debit",
+            "Credit",
+            "Balance",
+            "Universities Retirement Fund"
+        ]):
+            continue
+
+        # 🔑 NEW ROW STARTS WHEN DATE IS FOUND
+        if re.search(date_pattern, line):
+
+            if current_row:
+                rows.extend(_process_bank_row(current_row, file_name, table_name, row_idx))
+                row_idx += 1
+
+            current_row = [line]
+
+        else:
+            if current_row:
+                current_row.append(line)
+
+    if current_row:
+        rows.extend(_process_bank_row(current_row, file_name, table_name, row_idx))
+
+    return rows
+
+def _process_bank_row(row_lines, file_name, table_name, row_idx):
+
+    full_line = " ".join(row_lines)
+
+    # =========================
+    # ✅ DATE EXTRACTION + NORMALISATION (FIXED)
+    # =========================
+    date_pattern = r"\d{2}\s*/\s*\d{2}\s*/\s*(?:\d{2}|\d{4})"
+    date_match = re.search(date_pattern, full_line)
+    date = date_match.group(0) if date_match else ""
+
+    # 🔥 NORMALISE DATE
+    date = re.sub(r"\s+", "", date)
+
+# 🔥 NORMALISE TO YYYY FORMAT
+    if date:
+        parts = date.split("/")
+        if len(parts) == 3 and len(parts[2]) == 2:
+            parts[2] = "20" + parts[2]
+        date = "/".join(parts)
+
+    # =========================
+    # ✅ NUMBER RECONSTRUCTION (FIXED)
+    # =========================
+    raw_nums = re.findall(r"-?\d[\d,]*\.?\d*", full_line)
+
+    nums = []
+    for n in raw_nums:
+        cleaned = n.replace(" ", "")
+        if re.match(r"^\d+(\.\d+)?$", cleaned):
+            nums.append(cleaned)
+
+    # =========================
+    # ✅ DESCRIPTION CLEANUP (SAFE)
+    # =========================
+    desc = full_line
+
+    for n in raw_nums:
+        desc = desc.replace(n, "", 1)
+
+    # remove date safely
+    desc = desc.replace(date, "")
+    desc = clean_value(desc)
+
+    # =========================
+    # OUTPUT
+    # =========================
+    output = [date, desc] + nums
+
+    rows = []
+
+    for col_idx, val in enumerate(output, 1):
+        rows.append([file_name, table_name, row_idx, col_idx, val])
+
+    return rows
+
+def extract_bank_statement_precise(page, file_name, page_num):
+    text = page.extract_text()
+    if not text or "BANK STATEMENT" not in text:
+        return []
+
+    print("   🎯 Extracting BANK STATEMENT (precise mode)")
+
+    rows = []
+    table_name = f"BankStatement_{page_num}"
+
+    lines = [l.strip() for l in text.split("\n") if l.strip()]
+
+    row_idx = 1
+
+    for line in lines:
+
+        # skip header lines
+        if any(h in line for h in [
+            "BANK STATEMENT",
+            "Transaction type",
+            "Debit",
+            "Credit",
+            "Balance",
+            "Universities Retirement Fund"
+        ]):
+            continue
+
+        # detect rows with dates (key anchor)
+        if re.match(r"\d{2}/\d{2}/\d{2}", line):
+
+            parts = re.split(r"\s{2,}", line)
+
+            # fallback if spacing fails → numeric split
+            if len(parts) < 3:
+                nums = re.findall(r"-?\d[\d,]*\.?\d*", line)
+                label = line
+
+                for n in nums:
+                    label = label.replace(n, "", 1)
+
+                parts = [clean_value(label)] + [clean_value(n) for n in nums]
+
+            for col_idx, val in enumerate(parts, 1):
+                rows.append([file_name, table_name, row_idx, col_idx, clean_value(val)])
+
+            row_idx += 1
+
+    return rows
 
 # ----------------------------
 # FALLBACK OCR DUMP
@@ -332,6 +594,60 @@ def extract_valuation_lines_safe(page, file_name, page_num):
     return rows
 
 
+def extract_total_portfolio_value(page, file_name, page_num):
+    text = page.extract_text()
+    if not text:
+        return []
+
+    rows = []
+    table_name = f"Summary_{page_num}"
+
+    pattern = r"(TOTAL PORTFOLIO VALUE|Total portfolio).*?([\d,]+\.\d+).*?([\d,]+\.\d+).*?(\d+\.\d+)"
+    match = re.search(pattern, text, re.DOTALL)
+
+    if match:
+        label = match.group(1)
+        book_val = match.group(2).replace(",", "")
+        market_val = match.group(3).replace(",", "")
+        perc = match.group(4)
+
+        row_idx = 1
+
+        rows.append([file_name, table_name, row_idx, 1, label])
+        rows.append([file_name, table_name, row_idx, 2, book_val])
+        rows.append([file_name, table_name, row_idx, 3, market_val])
+        rows.append([file_name, table_name, row_idx, 4, perc])
+
+        print("   ✅ TOTAL PORTFOLIO VALUE captured")
+
+    return rows
+
+
+def extract_lines_as_table(page, file_name, page_num):
+    text = page.extract_text()
+    if not text:
+        return []
+
+    lines = [l.strip() for l in text.split("\n") if l.strip()]
+    rows = []
+    table_name = f"TextFallback_{page_num}"
+    row_idx = 1
+
+    for line in lines:
+        if re.search(r"\d", line) and len(line) > 20:
+            rows.append([
+                file_name,
+                table_name,
+                row_idx,
+                1,
+                clean_value(line)
+            ])
+            row_idx += 1
+
+    if rows:
+        print("   ⚠️ No tables detected - using text fallback")
+
+    return rows
 
 
 
@@ -390,12 +706,101 @@ def combine_result_csvs(results_path):
 # MAIN
 # ----------------------------
 
+
+def get_fund_code(filename: str) -> str:
+    """
+    Returns a code based on keywords in the filename.
+    
+    Examples:
+    "(AGP Smooth) ORION NAM PROV HIGH GROWTH - 28 FEBRUARY 2026.pdf" -> "AGPHigh"
+    "(AGP Stable) GEMLIFE RETIREMENT FUND - 28 FEBRUARY 2026.pdf" -> "AGP"
+    """
+
+    
+    # Normalize to uppercase for consistent matching
+    
+    if filename=="(CAM) 4056832_3741013_Investment statement_NAMPOWER PROVIDENT FUND_13843876_UT.pdf":
+        temp=0
+    name = filename.upper()
+
+    result = ""
+
+    
+    
+    
+
+    # Base rule
+    if "AGP" in name:
+        result = "AGP"
+
+        # Additional condition
+        if "HIGH" in name:
+            result += " High"
+    
+    if "ALLAN GRAY" in name:
+        result = "Allan Gray"
+
+    if "ALLEGROW" in name:
+        result = "Allegrow"
+
+    if "CAM" in name:
+        result = "Capricorn Asset Managers"
+
+    if "CORE GROWTH" in name:
+        result = "Core Growth"
+
+    if "IJG" in name:
+        result = "IJG"
+
+    if "M&G" in name:
+        result = "M&G"
+
+    if "NINETY ONE" in name:
+        result = "Ninety One"
+
+    if "(OM" in name:
+        result = "Old Mutual"
+
+
+    if "SANLAM" in name:
+        result = "Sanlam"
+        if "WITHDRAWALS"  in name:
+            result += " Contributions and Withdrawals"
+        if "MEDICAL CARE" in name:
+            result = "SIM"
+
+
+    
+    if "UNLISTED DEBT" in name:
+        result = "Sanlam Unlisted Debt"
+
+    if "STIMULUS" in name:
+        result = "Stimulus"
+    
+    if ("NAM" in name) and (result==""):
+        result = "Namibia Asset Management"
+        if "WITHDRAWALS"  in name:
+            result += " Contributions and Withdrawals"
+    
+    
+    if result=="":
+        temp=0
+
+    return result
+
+
+
+
+
+
 def main():
-    Indices_List = ["NHE", "GemLife", "GIPF","Namwater","NamibMills","Nampower"]
 
-    base_path = Path(__file__).parent
-    results_path = base_path / "Results"
-
+    Indices_List = ["GemLife", "GIPF","Namwater","NamibMills","Nampower","UNIPOL","NBC","NHE","NMC","ORION","UNIPOL"]
+    
+    
+    base_path = Path(r"C:\Work\InvestmentIndicesExtraction\PDF_Data")
+    results_path = Path(r"C:\Work\InvestmentIndicesExtraction\Results")
+    
     clear_results_folder(results_path)
 
     for i in Indices_List:
@@ -419,18 +824,40 @@ def main():
 
             with pdf:
                 for p_num, page in enumerate(pdf.pages, 1):
-                    valuation_rows = extract_valuation_rows(page, file.name, p_num)
+
+                    contrib_rows = extract_contributions_table(page, get_fund_code(file.name), p_num)
+                    if contrib_rows:
+                        all_rows.extend(contrib_rows)
+                        continue  # 🔥 VERY IMPORTANT
+                    
+                    bank_rows = extract_bank_statement_reconstructed(page, get_fund_code(file.name), p_num)
+                    if bank_rows:
+                        all_rows.extend(bank_rows)
+                        continue  # 🔥 IMPORTANT
+                    
+                    # 📊 PORTFOLIO SUMMARY
+                    portfolio_rows = extract_portfolio_summary_precise(page, get_fund_code(file.name), p_num)
+                    if portfolio_rows:
+                        all_rows.extend(portfolio_rows)
+                        continue  # 🔥 IMPORTANT
+                    
+                    # Existing logic continues unchanged
+                    valuation_rows = extract_valuation_rows(page, get_fund_code(file.name), p_num)
                     all_rows.extend(valuation_rows)
+                
+                    total_rows = extract_total_portfolio_value(page, get_fund_code(file.name), p_num)
+                    all_rows.extend(total_rows)
+
                     if is_ijg:
                         print(f"   🔥 IJG structured extraction page {p_num}")
-                        rows = extract_ijg_structured(page, file.name, p_num)
+                        rows = extract_ijg_structured(page, get_fund_code(file.name), p_num)
 
                         if rows:
                             all_rows.extend(rows)
                         else:
                             print("   ⚠️ Structured failed → fallback OCR")
                             all_rows.extend(
-                                extract_simple_financial_table(page, file.name, p_num)
+                                extract_simple_financial_table(page, get_fund_code(file.name), p_num)
                             )
                         continue
 
@@ -462,7 +889,7 @@ def main():
 
                                     for col_idx, val in enumerate(new_row, 1):
                                         all_rows.append([
-                                            file.name,
+                                            get_fund_code(file.name),
                                             table_name,
                                             row_counter,
                                             col_idx,
@@ -470,6 +897,9 @@ def main():
                                         ])
 
                                     row_counter += 1
+                    else:
+                        fallback_rows = extract_lines_as_table(page, get_fund_code(file.name), p_num)
+                        all_rows.extend(fallback_rows)
 
         output = results_path / f"{i}.csv"
 
