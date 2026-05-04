@@ -3,6 +3,8 @@ ENV/
 VENV/
 PDF_Data/
 Results/
+Index Spreadsheets/
+Per Fund Spreadsheet/
 
 __pycache__/
 .vscode/
